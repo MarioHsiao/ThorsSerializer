@@ -73,6 +73,29 @@ struct Data
     std::string downloadURL;
     std::string coverURL;
 };
+
+struct DataFilter
+{
+    bool filterOut(Data const& object) const
+    {
+        return object._id != "5cff620c48229f7d88fc620d";
+    }
+};
+
+namespace ThorsAnvil
+{
+    namespace Serialize
+    {
+
+template<>
+struct FilterTrait<Data>
+{
+    using Filter = DataFilter;
+};
+    }
+}
+
+
 ThorsAnvil_MakeTrait(Time);
 ThorsAnvil_MakeTrait(Difficulties,      easy, normal, hard, expert, expertPlus);
 ThorsAnvil_MakeTrait(Items,             duration, length, bombs, notes, obstacles, njs, njsOffset);

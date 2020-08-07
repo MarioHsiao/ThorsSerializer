@@ -56,6 +56,58 @@ namespace ThorsAnvil
     namespace Serialize
     {
 
+template<typename T>
+struct FilterTrait
+{
+    using Filter = void;
+};
+
+template< typename T, typename E>
+struct HasFilter
+{
+    template<typename A>
+    static auto test(bool (A::*)(E const&) const)
+    {
+            return std::true_type();
+    }
+    template<typename A>
+    static auto test(bool (A::*)(E const&))
+    {
+            return std::true_type();
+    }
+
+    template <typename A>
+    static auto test(decltype(&A::filterOut), void*)
+    {
+            return test<A>(&A::filterOut);
+    }
+
+    template<typename A>
+    static auto test(...)
+    {
+            return std::false_type();
+    }
+
+    /* This will be either `std::true_type` or `std::false_type` */
+    using Type = decltype(test<T>(nullptr ,nullptr));
+
+    static constexpr bool value = Type::value;
+};
+
+template<typename T>
+bool filterOut(T const& object)
+{
+    if constexpr (HasFilter<typename FilterTrait<T>::Filter, T>::value)
+    {
+        static typename FilterTrait<T>::Filter filter;
+        return filter.filterOut(object);
+    }
+    else
+    {
+        return false;
+    }
+}
+
 /* ------------------------------- GetValueType ------------------------------- */
 /*
  * Used to retrieve a value from a stream.
@@ -168,6 +220,10 @@ class ContainerMemberExtractorInserter
         {
             V                   data{};
             GetValueType<V>     valueGetter(parser, data);
+            if (filterOut(data))
+            {
+                return false;
+            }
 
             MemberInserter<C>   inserter(object);
             inserter.add(index, std::move(data));
@@ -206,7 +262,7 @@ class ContainerMemberExtractorEmplacer
             MemberEmplacer<C>   extractor(object);
             V&                  data = extractor.get(index);
             GetValueType<V>     valueGetter(parser, data);
-            return true;
+            return !filterOut(data);
         }
         void resetObjectMembers(C& object) const
         {
@@ -619,7 +675,7 @@ class Traits<std::map<std::string, Value>>
                 {
                     Value&                  data = object[key];
                     GetValueType<Value>     valueGetter(parser, data);
-                    return true;
+                    return !filterOut(data);
                 }
         };
 
@@ -687,6 +743,10 @@ class Traits<std::unordered_map<std::string, Value>>
                 {
                     Value                   data{};
                     GetValueType<Value>     valueGetter(parser, data);
+                    if (filterOut(data))
+                    {
+                        return false;
+                    }
                     object.insert(std::make_pair(std::move(key), std::move(data)));
                     return true;
                 }
@@ -752,6 +812,10 @@ class Traits<std::unordered_multimap<std::string, Value>>
                 {
                     Value                   data{};
                     GetValueType<Value>     valueGetter(parser, data);
+                    if (filterOut(data))
+                    {
+                        return false;
+                    }
                     object.insert(std::make_pair(std::move(key), std::move(data)));
                     return true;
                 }
@@ -817,6 +881,10 @@ class Traits<std::multimap<std::string, Value>>
                 {
                     Value                   data{};
                     GetValueType<Value>     valueGetter(parser, data);
+                    if (filterOut(data))
+                    {
+                        return false;
+                    }
                     object.insert(std::make_pair(std::move(key), std::move(data)));
                     return true;
                 }
