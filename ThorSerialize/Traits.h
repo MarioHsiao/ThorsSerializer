@@ -20,11 +20,17 @@
  * See README.md for examples.
  */
 
+#include "ThorsSerializerUtil.h"
 #include <string>
 #include <tuple>
 #include <map>
 #include <functional>
 #include <memory>
+#include <utility>
+#include <type_traits>
+#include <stdexcept>
+#include <cstddef>
+#include <cstring>
 
 /*
  * Macros for counting the number of arguments
@@ -204,14 +210,15 @@ class Traits<DataType*>                                                 \
         static void release(T* p)   {ActionObj.release(p);}             \
 };                                                                      \
 }}
-#define ThorsAnvil_MakeTrait_Base(Parent, TType, Count, DataType, ...)  \
+#define ThorsAnvil_MakeTrait_Base(ParentType, TType, Count, DataType, ...)  \
 namespace ThorsAnvil { namespace Serialize {                            \
 template<BUILDTEMPLATETYPEPARAM(THOR_TYPENAMEPARAMACTION, Count)>       \
 class Traits<DataType BUILDTEMPLATETYPEVALUE(THOR_TYPENAMEVALUEACTION, Count) > \
 {                                                                       \
     public:                                                             \
         static constexpr TraitType type = TraitType::TType;             \
-        Parent                                                          \
+        ParentType                                                      \
+        using MyType = DataType BUILDTEMPLATETYPEVALUE(THOR_TYPENAMEVALUEACTION, Count); \
                                                                         \
         using Members = std::tuple<                                     \
                         REP_N(THOR_TYPEACTION, Count, DataType, __VA_ARGS__)        \
@@ -223,6 +230,56 @@ class Traits<DataType BUILDTEMPLATETYPEVALUE(THOR_TYPENAMEVALUEACTION, Count) > 
                         REP_N(THOR_VALUEACTION, Count, DataType, __VA_ARGS__)       \
                                             };                          \
             return members;                                             \
+        }                                                               \
+                                                                        \
+        template<typename M>                                            \
+        static std::size_t addSizeOneMember(PrinterInterface& printer, MyType const& /*object*/, M* staticObjPtr) \
+        {                                                               \
+            using MemberType    = std::decay_t<M>;                      \
+            if (staticObjPtr)                                           \
+            {                                                           \
+                return Traits<MemberType>::getPrintSize(printer, *staticObjPtr, false);\
+            }                                                           \
+            return printer.getSizeNull();                               \
+        }                                                               \
+        template<typename M>                                            \
+        static std::size_t addSizeOneMember(PrinterInterface& printer, MyType const& object, M MyType::* memPtr) \
+        {                                                               \
+            using MemberTypeDec = decltype(object.*memPtr);             \
+            using MemberType    = std::decay_t<MemberTypeDec>;          \
+            return Traits<MemberType>::getPrintSize(printer, object.*memPtr, false);\
+        }                                                               \
+                                                                        \
+        template<std::size_t... Seq>                                    \
+        static std::size_t addSizeEachMember(PrinterInterface& printer, MyType const& object, std::index_sequence<Seq...> const&) \
+        {                                                               \
+            Members const& members = getMembers();                      \
+            std::size_t result = 0;                                     \
+            auto partSize = {std::size_t(0), addSizeOneMember(printer, object, std::get<Seq>(members).second)...};\
+            auto nameSize = {std::size_t(0), std::strlen(std::get<Seq>(members).first)...};\
+            for (auto val: partSize)                                     \
+            {                                                           \
+                result += val;                                          \
+            }                                                           \
+            for (auto val: nameSize)                                     \
+            {                                                           \
+                result += val;                                          \
+            }                                                           \
+            return result;                                              \
+        }                                                               \
+                                                                        \
+        static std::size_t getPrintSizeTotal(PrinterInterface& printer, MyType const& object, std::size_t& count, std::size_t& memberSize)\
+        {                                                               \
+            count       += std::tuple_size_v<Members>;                  \
+            memberSize  += addSizeEachMember(printer, object, std::make_index_sequence<std::tuple_size_v<Members>>());\
+                                                                        \
+            CalcSizeHelper<MyType>  calcHelper;                         \
+            return calcHelper.getPrintSize(printer, object, count, memberSize);\
+        }                                                               \
+                                                                        \
+        static std::size_t getPrintSize(PrinterInterface& printer, MyType const& object, bool poly)\
+        {                                                               \
+            return tryGetPolyMorphicPrintSize(printer, object, poly, 0);\
         }                                                               \
 };                                                                      \
 }}                                                                      \
@@ -258,7 +315,14 @@ namespace ThorsAnvil { namespace Serialize {                            \
 template<>                                                              \
 class Traits<DataType>                                                  \
 {                                                                       \
-    public: static constexpr TraitType type = TraitType::Serialize;     \
+    public:                                                             \
+    static constexpr TraitType type = TraitType::Serialize;             \
+    static std::size_t getPrintSize(PrinterInterface& printer, DataType const& value, bool)\
+    {                                                                   \
+        using DataTypeSerializer = typename DataType::ThorsSerializer;  \
+        std::size_t size = DataTypeSerializer::size(value);             \
+        return printer.getSizeRaw(size);                                \
+    }                                                                   \
 };                                                                      \
 }}                                                                      \
 DO_ASSERT(DataType)
@@ -313,6 +377,11 @@ class Traits<EnumName>                                                  \
             }                                                           \
             throw std::runtime_error(msg + " Invalid Enum Value");      \
         }                                                               \
+        static std::size_t getPrintSize(PrinterInterface& printer, EnumName const& value, bool)\
+        {                                                               \
+            auto find = getValues().find(value);                        \
+            return printer.getSizeValue(find->second);                  \
+        }                                                               \
 };                                                                      \
 }}                                                                      \
 DO_ASSERT(EnumName)
@@ -331,6 +400,13 @@ DO_ASSERT(EnumName)
     {                                                                                       \
         ThorsAnvil::Serialize::parsePolyMorphicObject<Type>(parent, parser, *this);         \
     }                                                                                       \
+    virtual std::size_t getPolyMorphicPrintSize(ThorsAnvil::Serialize::PrinterInterface& printer) const \
+    {                                                                                       \
+        std::size_t count = 1;                                                              \
+        std::size_t memberSize = (printer.config.polymorphicMarker.size() + printer.getSizeValue(std::string(polyMorphicSerializerName())));\
+                                                                                            \
+        return getNormalPrintSize(printer, *this, count, memberSize);                       \
+    }                                                                                       \
     static constexpr char const* polyMorphicSerializerName()                                \
     {                                                                                       \
         return #Type;                                                                       \
@@ -341,36 +417,6 @@ namespace ThorsAnvil
 {
     namespace Serialize
     {
-
-/*
- * Defines the generic type that all serialization types can expand on
- */
-enum class TraitType {Invalid, Parent, Value, Map, Array, Enum, Pointer, Serialize};
-
-/*
- * A class for holding multiple header types.
- * Multiple enheritance is a rare case but it does happen (has been requested).
- * Because we are using macros I can allow a comma seporated list of parents so we have to
- * group the types into a single unique type "Parents". Then we will specialize the parsing
- * and printing code to handle this as a special case.
- */
-template<typename... P>
-struct Parents: public std::tuple<P...> {};
-
-/*
- * To help the macros check the parent type we need to extract the type.
- * There is a special case when we use "Parents" to get the first type
- */
-template<typename T>
-struct GetPrimaryParentType
-{
-    using type = T;
-};
-template<typename... Args>
-struct GetPrimaryParentType<Parents<Args...>>
-{
-    using type = typename std::tuple_element<0, std::tuple<Args...>>::type;
-};
 
 /*
  * The traits type.
@@ -401,55 +447,6 @@ class Traits
         // does not need a separate declaration in a compilation unit.
 };
 
-/*
- * A specialization for pointer objects.
- * They are a pointer type. When serialized a pointer will emit:
- *      If the pointer is nullptr:      A "null" object.
- *      Otherwise de-reference the pointer and emit like normal.
- *
- * If the de-referenced type has a Traits class then it will be normally
- * serialized. Otherwise there will be an error.
- */
-template<typename T>
-class Traits<T*>
-{
-    public:
-        static constexpr TraitType type = TraitType::Pointer;
-        static T*   alloc()         {return new T;}
-        static void release(T* p)   {delete p;}
-};
-
-/*
- * Specialization of Parents so we can handle them in normal streaming operations
- */
-template<typename... Args>
-class Traits<Parents<Args...>>
-{
-    public:
-        static constexpr TraitType type = TraitType::Parent;
-};
-
-/*
- * Declare types that can be read/written directly by the parser/printer
- * as value types. Other compound types need to use the Serializer/Deserializer
- */
-template<> class Traits<short int>              {public: static constexpr TraitType type = TraitType::Value;};
-template<> class Traits<int>                    {public: static constexpr TraitType type = TraitType::Value;};
-template<> class Traits<long int>               {public: static constexpr TraitType type = TraitType::Value;};
-template<> class Traits<long long int>          {public: static constexpr TraitType type = TraitType::Value;};
-
-template<> class Traits<unsigned short int>     {public: static constexpr TraitType type = TraitType::Value;};
-template<> class Traits<unsigned int>           {public: static constexpr TraitType type = TraitType::Value;};
-template<> class Traits<unsigned long int>      {public: static constexpr TraitType type = TraitType::Value;};
-template<> class Traits<unsigned long long int> {public: static constexpr TraitType type = TraitType::Value;};
-
-template<> class Traits<float>                  {public: static constexpr TraitType type = TraitType::Value;};
-template<> class Traits<double>                 {public: static constexpr TraitType type = TraitType::Value;};
-template<> class Traits<long double>            {public: static constexpr TraitType type = TraitType::Value;};
-
-template<> class Traits<bool>                   {public: static constexpr TraitType type = TraitType::Value;};
-
-template<> class Traits<std::string>            {public: static constexpr TraitType type = TraitType::Value;};
 
 /*
  * For object that are serialized as Json Array
@@ -560,6 +557,7 @@ struct ThorsAnvil_InitPolyMorphicType<T, false>
 {
     ThorsAnvil_InitPolyMorphicType(char const*){}
 };
+
 
     }
 }

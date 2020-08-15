@@ -1,7 +1,9 @@
 #ifndef THORS_ANVIL_SERIALIZE_SERIALIZE_TPP
 #define THORS_ANVIL_SERIALIZE_SERIALIZE_TPP
 
+#include "SerUtil.h"
 #include "ThorsIOUtil/Utility.h"
+#include "ThorsSerializerUtil.h"
 #include <algorithm>
 #include <sstream>
 #include <type_traits>
@@ -66,14 +68,6 @@ class ApplyActionToParent<TraitType::Parent, T, I>
 /* ------------------- HeedAllValues ---------------------------- */
 template<typename T>
 struct HeedAllValues;
-
-template <typename, typename = void>
-struct HasParent: std::false_type
-{};
-
-template <class T>
-struct HasParent<T, std::enable_if_t<(sizeof(typename Traits<T>::Parent) >= 0)>>: std::true_type
-{};
 
 template<typename T>
 typename std::enable_if<! HasParent<T>::value>::type
@@ -561,12 +555,17 @@ class SerializerForBlock
     PrinterInterface&   printer;
     T const&            object;
     public:
-        SerializerForBlock(Serializer& parent, PrinterInterface& printer, T const& object)
+        SerializerForBlock(Serializer& parent, PrinterInterface& printer, T const& object, bool poly = false)
             : parent(parent)
             , printer(printer)
             , object(object)
         {
-            printer.openMap();
+            std::size_t size = 0;
+            if (printer.printerUsesSize())
+            {
+                size = Traits<T>::getPrintSize(printer, object, poly);
+            }
+            printer.openMap(size);
         }
         ~SerializerForBlock()
         {
@@ -591,7 +590,7 @@ class SerializerForBlock<TraitType::Value, T>
     PrinterInterface&   printer;
     T const&            object;
     public:
-        SerializerForBlock(Serializer& parent, PrinterInterface& printer,T const& object)
+        SerializerForBlock(Serializer& parent, PrinterInterface& printer,T const& object, bool /*poly*/ = false)
             : parent(parent)
             , printer(printer)
             , object(object)
@@ -609,7 +608,7 @@ class SerializerForBlock<TraitType::Serialize, T>
     PrinterInterface&   printer;
     T const&            object;
     public:
-        SerializerForBlock(Serializer& parent, PrinterInterface& printer,T const& object)
+        SerializerForBlock(Serializer& parent, PrinterInterface& printer,T const& object, bool /*poly*/ = false)
             : parent(parent)
             , printer(printer)
             , object(object)
@@ -653,7 +652,7 @@ template<typename T>
 void printPolyMorphicObject(Serializer& parent, PrinterInterface& printer, T const& object)
 {
     using BaseType = typename std::remove_pointer<T>::type;
-    SerializerForBlock<ThorsAnvil::Serialize::Traits<BaseType>::type, BaseType>  block(parent, printer, object);
+    SerializerForBlock<ThorsAnvil::Serialize::Traits<BaseType>::type, BaseType>  block(parent, printer, object, true);
 
     // Note the call to printPolyMorphicMembers() rather than printMembers()
     // this adds the "__type": "<Type Name>"
@@ -667,7 +666,7 @@ class SerializerForBlock<TraitType::Pointer, T>
     PrinterInterface&   printer;
     T const&            object;
     public:
-        SerializerForBlock(Serializer& parent, PrinterInterface& printer,T const& object)
+        SerializerForBlock(Serializer& parent, PrinterInterface& printer,T const& object, bool /*poly*/ = false)
             : parent(parent)
             , printer(printer)
             , object(object)
@@ -694,7 +693,7 @@ class SerializerForBlock<TraitType::Enum, T>
     PrinterInterface&   printer;
     T const&            object;
     public:
-        SerializerForBlock(Serializer& parent, PrinterInterface& printer,T const& object)
+        SerializerForBlock(Serializer& parent, PrinterInterface& printer,T const& object, bool /*poly*/ = false)
             : parent(parent)
             , printer(printer)
             , object(object)
@@ -713,12 +712,17 @@ class SerializerForBlock<TraitType::Array, T>
     PrinterInterface& printer;
     T const&            object;
     public:
-        SerializerForBlock(Serializer& parent, PrinterInterface& printer, T const& object)
+        SerializerForBlock(Serializer& parent, PrinterInterface& printer, T const& object, bool /*poly*/ = false)
             : parent(parent)
             , printer(printer)
             , object(object)
         {
-            printer.openArray(SerializeArraySize<T>::size(object));
+            std::size_t size = 0;
+            if (printer.printerUsesSize())
+            {
+                size = Traits<T>::getPrintSize(printer, object, false);
+            }
+            printer.openArray(size);
         }
         ~SerializerForBlock()
         {
