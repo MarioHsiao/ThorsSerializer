@@ -21,6 +21,7 @@
  */
 
 #include "ThorsSerializerUtil.h"
+#include "ThorsIOUtil/Utility.h"
 #include <string>
 #include <tuple>
 #include <map>
@@ -319,9 +320,7 @@ class Traits<DataType>                                                  \
     static constexpr TraitType type = TraitType::Serialize;             \
     static std::size_t getPrintSize(PrinterInterface& printer, DataType const& value, bool)\
     {                                                                   \
-        using DataTypeSerializer = typename DataType::ThorsSerializer;  \
-        std::size_t size = DataTypeSerializer::size(value);             \
-        return printer.getSizeRaw(size);                                \
+        return tryGetSizeFromSerializeType(printer, value, 0);          \
     }                                                                   \
 };                                                                      \
 }}                                                                      \
@@ -510,7 +509,10 @@ class PolyMorphicRegistry
             auto     find       = cont.find(name);
             if (find == cont.end())
             {
-                throw std::runtime_error("ThorsAnvil::Serialize::PolyMorphicRegistry::getNamedTypeConvertedTo: Non polymorphic type");
+                throw std::runtime_error(
+                        ThorsAnvil::Utility::buildErrorMessage("ThorsAnvil::Serialize::PolyMorphicRegistry", "getNamedTypeConvertedTo",
+                                                               "Non polymorphic type")
+                                                              );
             }
             void*       data        = find->second();
             AllocType*  dataBase    = reinterpret_cast<AllocType*>(data);
