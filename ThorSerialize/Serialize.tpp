@@ -88,7 +88,6 @@ struct HeedAllValues
     template<typename X>
     int checkAMember(std::map<std::string, bool> const& membersFound, std::pair<char const*, X> const& member)
     {
-        std::cerr << "CheckMember: " << member.first << "\n";
         if (membersFound.find(member.first) == std::end(membersFound))
         {
             throw std::runtime_error(
@@ -257,7 +256,7 @@ class DeSerializationForBlock<TraitType::Value, T>
 };
 template<typename T>
 class [[deprecated("This is caused by suing the ThorsAnvil_MakeTraitCustom macro. This is a bit hacky as it simply drops data into the stream. Please upgrade to ThorsAnvil_SelfSerialize as this allows custom behavior depending on the underlying format Json/Yaml/Bson")]]
-DeSerializationForBlock<TraitType::Serialize, T>
+DeSerializationForBlock<TraitType::Custom_Depricated, T>
 {
     DeSerializer&       parent;
     ParserInterface&    parser;
@@ -280,6 +279,33 @@ DeSerializationForBlock<TraitType::Serialize, T>
             valueStream >> object;
         }
 };
+template<typename T>
+class DeSerializationForBlock<TraitType::Custom_Serialize, T>
+{
+    DeSerializer&       parent;
+    ParserInterface&    parser;
+    public:
+        DeSerializationForBlock(DeSerializer& parent, ParserInterface& parser)
+            : parent(parent)
+            , parser(parser)
+        {}
+        void scanObject(T& object)
+        {
+            ParserInterface::ParserToken    tokenType = parser.getToken();
+            if (tokenType != ParserInterface::ParserToken::Value)
+            {
+                throw std::runtime_error(
+                        ThorsAnvil::Utility::buildErrorMessage("ThorsAnvil::Serialize::DeSerializationForBlock<Value>", "DeSerializationForBlock",
+                                                               "Invalid Object")
+                                                              );
+            }
+            using SerializingType = typename Traits<T>::SerializingType;
+            SerializingType info;
+            info.readCustom(parser, object);
+        }
+};
+
+
 /* ------------ tryParsePolyMorphicObject Serializer ------------------------- */
 template<typename T>
 struct ConvertPointer
@@ -390,6 +416,7 @@ class DeSerializationForBlock<TraitType::Pointer, T>
             ParserInterface::ParserToken    tokenType = parser.getToken();
             if (parser.isValueNull())
             {
+                parser.ignoreDataValue();
                 object = nullptr;
                 return;
             }
@@ -645,7 +672,7 @@ class SerializerForBlock<TraitType::Value, T>
 };
 template<typename T>
 class [[deprecated("This is caused by suing the ThorsAnvil_MakeTraitCustom macro. This is a bit hacky as it simply drops data into the stream. Please upgrade to ThorsAnvil_SelfSerialize as this allows custom behavior depending on the underlying format Json/Yaml/Bson")]]
-SerializerForBlock<TraitType::Serialize, T>
+SerializerForBlock<TraitType::Custom_Depricated, T>
 {
     Serializer&         parent;
     PrinterInterface&   printer;
@@ -668,6 +695,26 @@ SerializerForBlock<TraitType::Serialize, T>
                 Traits<T>::getPrintSize(printer, object, false);
             }
             printer.addRawValue(buffer.str());
+        }
+};
+template<typename T>
+class SerializerForBlock<TraitType::Custom_Serialize, T>
+{
+    Serializer&         parent;
+    PrinterInterface&   printer;
+    T const&            object;
+    public:
+        SerializerForBlock(Serializer& parent, PrinterInterface& printer,T const& object, bool /*poly*/ = false)
+            : parent(parent)
+            , printer(printer)
+            , object(object)
+        {}
+        ~SerializerForBlock()   {}
+        void printMembers()
+        {
+            using SerializingType = typename Traits<T>::SerializingType;
+            SerializingType info;
+            info.writeCustom(printer, object);
         }
 };
 

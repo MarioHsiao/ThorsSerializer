@@ -6,18 +6,209 @@
  *  Two macros are provides to facilitate the building of Traits<T>
  *  specializations for user defined types.
  *
- *      ThorsAnvil_MakeTraitCustom(DataType)    // Will use operator << and operator >>
- *      ThorsAnvil_PointerAllocator(DataType, Action)
  *      ThorsAnvil_MakeTrait(DataType, ...)
  *      ThorsAnvil_ExpandTrait(ParentType, DataType, ...)
  *      ThorsAnvil_Template_MakeTrait(TemplateParameterCount, DataType, ...)
  *      ThorsAnvil_Template_ExpandTrait(TemplateParameterCount, ParentType, DataType, ...)
+ *
+ *      ThorsAnvil_PointerAllocator(DataType, Action)
  *      ThorsAnvil_MakeEnum(<EnumType>, <EnumValues>...)
  *
  *      ThorsAnvil_PolyMorphicSerializer(Type)
  *      ThorsAnvil_RegisterPolyMorphicType(Type)
  *
- * See README.md for examples.
+ *      ThorsAnvil_MakeTraitCustomSerialize(Type, SerializableType)
+ *
+ *
+ * --------------------------------------------------------------------------
+ *
+ *      [[Depricated]]
+ *      Please don't use. Maintained for backward compatibility.
+ *      ThorsAnvil_MakeTraitCustom(DataType)    // Will use operator << and operator >>
+ *
+ * --------------------------------------------------------------------------
+ *
+ *      Most commonly used:
+ *      These are used for normal structures that you want to serialize.
+ *              ThorsAnvil_MakeTrait(Type, Member-1, Member-2 etc)
+ *
+ *              ThorsAnvil_ExpandTrait(Parent-Type, Type, Member-1, Member-2 etc)
+ *
+ *      If your types are template types we need to know the number of template parameters.
+ *      So you can use these alternatives for templated classes:
+ *
+ *              ThorsAnvil_Template_MakeTrait(Template-Param-Count, Type, Member-1, Member-2 etc)
+ *              ThorsAnvil_Template_ExpandTrait(Template-Param-Count, Parent-Type, Type, Member-1, Member-2 etc)
+ *
+ *
+ *      If you need special processing for pointers then you can use the following:
+ *      Note if your object simply used new/delete and can create a default object then you don't need
+ *      to use this. This is only required if you need some special creation/deletion processes.
+ *
+ *              ThorsAnvil_PointerAllocator(Type, AllocationType)
+ *
+ *              AllocationType::alloc()             // Called to default allocate an object. default new
+ *              AllocationType::release()           // Called to release object.             default delete
+ *
+ *      Enum values are treated like strings when serialized:
+ *
+ *              ThorsAnvil_MakeEnum(Enum-Type, Enum-1, Enum-2 etc)
+ *
+ *      If you want pointers to handle polymorphic pointers
+ *      Then we need some extra information:
+ *
+ *              Add the following to your class definition:
+ *                  ThorsAnvil_PolyMorphicSerializer(Type)
+ *
+ *              Then in a source file add the following line:
+ *                  ThorsAnvil_RegisterPolyMorphicType(Type)
+ *
+ *      The new version of Custom serializable:
+ *
+ *              ThorsAnvil_MakeTraitCustomSerialize(Type, SerializableType)
+ *
+ *      To get this to work you need to define the type SerializableType:
+ *
+ *              SerializableType::write(Printer, object)
+ *              SerializableType::read(Parser, object)
+ *
+ *
+ *      "object" is the object you want to serialize.
+ *      Printer/Parser will be derived from
+ *          PrinterInterface
+ *          ParserInterface
+ *
+ *      You can write versions that use these generic types or you can
+ *      have implementations for specific version.
+ *          eg. BsonParser/BsonPrinter
+ *
+ *      The code will link with the most appropriate version:
+ *
+ *
+ * --------------------------------------------------------------------------
+ *
+ *      Examples:
+ *
+ *      Bank.h
+ *              namespace OnLineBank
+ *              {
+ *                  enum TransType {Deposit, Withdraw, Correction};
+ *                  struct ID
+ *                  {
+ *                      long id;
+ *                  };
+ *                  struct SerializeID
+ *                  {
+ *                      // generic version we simply stream the integer value.
+ *                      static void write(ThorsAnvil::Serialize::PrinterInterface& printer, ID const& object)    {printer.stream() << object.id;}
+ *                      static void read(ThorsAnvil::Serialize::ParserInterface& parser, ID& object) {parser.stream() >> object.id;}
+ *
+ *                      // For Bson we need to encode it for Bson (Note: This is a simple example not necessarily a good one).
+ *                      static void writer(ThorsAnvil::Serialize::BsonPrinter& printer, ID& object)
+ *                      {
+ *                          // Write the type of value based on the BsonSepsification.
+ *                          printer.writeKey('\x07', 12);
+ *
+ *                          // The '\x07' means a 12 byte value.
+ *                          char buff[12] = {0};
+ *                          std::int32_t    x = htonl(object.id);
+ *                          printer.stream().write(reinterpret_cast<char*>(&x), sizeof(x));
+ *                          printer.stream().write(buff, 12 - sizeof(x));
+ *                      }
+ *                      static void writer(ThorsAnvil::Serialize::BsonParser& parser, ID& object)
+ *                      {
+ *                          char type = parser.getValueType();
+ *                          // assert type == '\x07'
+ *                          std::string key = parser.getKey();
+ *
+ *                          // Now read the 12 bytes we wrote above.
+ *                          std::int32_t    x;
+ *                          parser.stream().read(reinterpret_cast<char*>(&x), sizeof(x));
+ *                          parser.stream().ignore(12 - sizeof(x));
+ *                          object.id = ntohl(x);
+ *                      }
+ *                  };
+ *
+ *                  template<typename T>
+ *                  struct Flounder
+ *                  {
+ *                      T   data;
+ *                  };
+ *
+ *                  struct Transaction
+ *                  {
+ *                      long        timeStamp;
+ *                      int         amount;
+ *                      TransType   type;
+ *                      Transaction() {}
+ *                      Transaction(long timeStamp, int amount, TransType type)
+ *                          : timeStamp(timeStamp)
+ *                          , amount(amount)
+ *                          , type(type)
+ *                      {}
+ *                  };
+ *
+ *                  class BankAccount
+ *                  {
+ *                          friend ThorsAnvil::Serialize::Traits<OnLineBank::BankAccount>;
+ *                          ID              id;
+ *                          int             balance;
+ *                          std::string     details;
+ *                          bool            valid;
+ *                      public:
+ *                          BankAccount() {}
+ *                          BankAccount(ID const& id, int balance, std::string const& details, bool valid)
+ *                              : id(id)
+ *                              , balance(balance)
+ *                              , details(details)
+ *                              , valid(valid)
+ *                          {}
+ *                          virtual ~BankAccount() {}
+ *                          ThorsAnvil_PolyMorphicSerializer(OnLineBank::BankAccount);
+ *                          // Normal Methods
+ *                  };
+ *
+ *                  class CurrentAccount: public BankAccount
+ *                  {
+ *                          friend ThorsAnvil::Serialize::Traits<OnLineBank::CurrentAccount>;
+ *                          std::vector<Transaction>    actions;
+ *                      public:
+ *                          using BankAccount::BankAccount;
+ *                          CurrentAccount() {}
+ *                          ThorsAnvil_PolyMorphicSerializer(OnLineBank::CurrentAccount);
+ *                          void addTransaction(long timeStamp, int amount, TransType type)
+ *                          {
+ *                              actions.emplace_back(timeStamp, amount, type);
+ *                          }
+ *                  };
+ *
+ *                  class DepositAccount: public BankAccount
+ *                  {
+ *                          friend ThorsAnvil::Serialize::Traits<OnLineBank::DepositAccount>;
+ *                          int withdrawlLimit;
+ *                      public:
+ *                          using BankAccount::BankAccount;
+ *                          DepositAccount() {}
+ *                          ThorsAnvil_PolyMorphicSerializer(OnLineBank::DepositAccount);
+ *                  };
+ *              }
+ *
+ *              ThorsAnvil_MakeEnum(OnLineBank::TransType, Deposit, Withdraw, Correction);
+ *              ThorsAnvil_MakeTraitCustomSerialize(OnLineBank::ID, OnLineBank::SerializeID);
+ *              ThorsAnvil_MakeTrait(OnLineBank::Transaction, timeStamp, amount, type);
+ *              ThorsAnvil_Template_MakeTrait(1, OnLineBank::Flounder, data);
+ *              ThorsAnvil_MakeTrait(OnLineBank::BankAccount, id, balance, details, valid);
+ *              ThorsAnvil_ExpandTrait(OnLineBank::BankAccount, OnLineBank::CurrentAccount, actions);
+ *              ThorsAnvil_ExpandTrait(OnLineBank::BankAccount, OnLineBank::DepositAccount, withdrawlLimit);
+ *
+ *
+ *
+ *      // Bank.cpp
+ *
+ *          ThorsAnvil_RegisterPolyMorphicType(OnLineBank::CurrentAccount);
+ *          ThorsAnvil_RegisterPolyMorphicType(OnLineBank::DepositAccount);
+ *
+ *
  */
 
 #include "ThorsSerializerUtil.h"
@@ -207,8 +398,8 @@ class Traits<DataType*>                                                 \
 {                                                                       \
     public:                                                             \
         static constexpr TraitType type = TraitType::Pointer;           \
-        static DataType* alloc()    {return ActionObj.alloc();}         \
-        static void release(T* p)   {ActionObj.release(p);}             \
+        static DataType* alloc()    {return ActionObj::alloc();}        \
+        static void release(T* p)   {ActionObj::release(p);}            \
 };                                                                      \
 }}
 #define ThorsAnvil_MakeTrait_Base(ParentType, TType, Count, DataType, ...)  \
@@ -317,10 +508,34 @@ template<>                                                              \
 class Traits<DataType>                                                  \
 {                                                                       \
     public:                                                             \
-    static constexpr TraitType type = TraitType::Serialize;             \
+    static constexpr TraitType type = TraitType::Custom_Depricated;     \
     static std::size_t getPrintSize(PrinterInterface& printer, DataType const& value, bool)\
     {                                                                   \
         return tryGetSizeFromSerializeType(printer, value, 0);          \
+    }                                                                   \
+};                                                                      \
+}}                                                                      \
+DO_ASSERT(DataType)
+
+#define ThorsAnvil_MakeTraitCustomSerialize(DataType, SerializeType)    \
+namespace ThorsAnvil { namespace Serialize {                            \
+template<>                                                              \
+class Traits<DataType>                                                  \
+{                                                                       \
+    public:                                                             \
+    static constexpr TraitType type = TraitType::Custom_Serialize;      \
+    using SerializingType   = SerializeType;                            \
+    static std::size_t getPrintSize(PrinterInterface& printer, DataType const& object, bool)\
+    {                                                                   \
+        SerializingType info;                                           \
+        switch (printer.formatType())                                   \
+        {                                                               \
+            case FormatType::Bson:  return info.getPrintSizeBson(dynamic_cast<BsonPrinter&>(printer), object);\
+            case FormatType::Json:  /* Fall Through */                  \
+            case FormatType::Yaml:  /* Fall Through */                  \
+            default:                                                    \
+                throw CriticalException("Bad");                         \
+        }                                                               \
     }                                                                   \
 };                                                                      \
 }}                                                                      \
